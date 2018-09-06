@@ -11,6 +11,10 @@
 #include<time.h>
 
 #include<thread>
+#include <vector>
+#include <algorithm>    // std::random_shuffle
+
+#include "file_reader.h"
 
 // Blatantly copied from: https://stackoverflow.com/questions/1680365/integer-to-ip-address-c
 void print_ip(int ip)
@@ -193,13 +197,7 @@ void sniff(uint32_t server_address) {
     }
 }
 
-int main(int argc, char* argv[]) {
-    
-    if (argc < 2) {
-       fprintf(stderr,"usage %s hostname\n", argv[0]);
-       exit(0);
-    }
-
+void scan_host(const char *host_name, std::vector<int> &ports) {
     struct sockaddr_in source_in, destination_in;
     struct hostent *destination;
     struct pseudo_header psh;
@@ -211,7 +209,7 @@ int main(int argc, char* argv[]) {
     memset (&datagram, 0, 4096); /* zero out the buffer */
 
     // Get destination hostent
-    destination = gethostbyname(argv[1]);
+    destination = gethostbyname(host_name);
     bcopy((char *)destination->h_addr,
         (char *)&destination_in.sin_addr.s_addr,
         destination->h_length);
@@ -239,9 +237,9 @@ int main(int argc, char* argv[]) {
 
     srand(time(NULL));  // Seed random function
 
-    for(int portno = 0; portno < 10000; ++portno) {        
+    for(const int destination_port : ports) {        
         tcph->source = htons((rand() % 2000) + 2000); // Get a random port in range 1999 - 3999
-        tcph->dest = htons(portno);
+        tcph->dest = htons(destination_port);
         tcph->check = 0;
             
         psh.source_address = source_address;
@@ -263,6 +261,29 @@ int main(int argc, char* argv[]) {
     }
 
     sniffer_thread.join();
+}
+
+int main(int argc, char* argv[]) {
+    
+    if (argc < 2) {
+       fprintf(stderr,"usage %s hostname\n", argv[0]);
+       exit(0);
+    }
+
+    std::vector<int> ports = get_lines("ports.txt");
+    std::vector<std::string> hosts = {"localhost"};
+
+    // set seed for random_shuffle()
+    std::srand(unsigned(std::time(0)));
+
+    // Shuffle targets
+    std::random_shuffle(ports.begin(), ports.end());
+    std::random_shuffle(hosts.begin(), hosts.end());
+
+    // TODO: Multithread me
+    for(const auto host : hosts) {
+        scan_host(host.c_str(), ports);
+    }
 
     return 0;
 }
