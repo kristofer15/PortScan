@@ -117,9 +117,7 @@ struct tcphdr* get_tcp_header(char *datagram, uint8_t flags) {
     struct tcphdr *tcph = (struct tcphdr *) (datagram + sizeof (struct iphdr));
 
     //TCP Header
-    srand(time(NULL));  // Seed random function
-    tcph->source = htons((rand() % 2000) + 2000); // Get a random port in range 1999 - 3999
-
+    tcph->source = 0; // Set later
     tcph->dest = 0; // Set later
     tcph->seq = htonl(3434);
     tcph->ack_seq = 0;
@@ -239,8 +237,10 @@ int main(int argc, char* argv[]) {
 
     std::thread sniffer_thread(sniff, destination_address);
 
-    for(int portno = 0; portno < 1000; ++portno) {
+    srand(time(NULL));  // Seed random function
 
+    for(int portno = 0; portno < 10000; ++portno) {        
+        tcph->source = htons((rand() % 2000) + 2000); // Get a random port in range 1999 - 3999
         tcph->dest = htons(portno);
         tcph->check = 0;
             
