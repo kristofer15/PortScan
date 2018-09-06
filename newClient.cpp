@@ -1,4 +1,3 @@
-// https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
 #include<stdio.h> //printf
 #include<string.h> //memset
 #include<stdlib.h> //for exit(0);
@@ -78,6 +77,7 @@ uint32_t get_local_address()
     return name.sin_addr.s_addr;
 }
 
+// From: https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
 struct iphdr* get_ip_header(char *datagram, uint32_t source_address, uint32_t destination_address) {
     struct iphdr *iph = (struct iphdr *) datagram;
 
@@ -86,12 +86,12 @@ struct iphdr* get_ip_header(char *datagram, uint32_t source_address, uint32_t de
     iph->version = 4;
     iph->tos = 0;
     iph->tot_len = sizeof (struct ip) + sizeof (struct tcphdr);
-    iph->id = htons (3525); //Id of this packet
+    iph->id = htons (3525);
     iph->frag_off = htons(16384);
     iph->ttl = 20;
     iph->protocol = IPPROTO_TCP;
-    iph->check = 0;      //Set to 0 before calculating checksum
-    iph->saddr = source_address; // source_in.sin_addr.s_addr;
+    iph->check = 0;
+    iph->saddr = source_address;
     iph->daddr = destination_address;
      
     iph->check = csum ((unsigned short *) datagram, iph->tot_len >> 1);
@@ -99,8 +99,8 @@ struct iphdr* get_ip_header(char *datagram, uint32_t source_address, uint32_t de
     return iph;
 }
 
-// flag logic from:
-// https://github.com/chinmay29/PortScanner/blob/master/PortScanner.cpp
+// flag logic from: https://github.com/chinmay29/PortScanner/blob/master/PortScanner.cpp
+// Structure from:  https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
 struct tcphdr* get_tcp_header(char *datagram, uint32_t destination_port, uint8_t flags) {
     struct tcphdr *tcph = (struct tcphdr *) (datagram + sizeof (struct iphdr));
 
@@ -111,14 +111,14 @@ struct tcphdr* get_tcp_header(char *datagram, uint32_t destination_port, uint8_t
     tcph->dest = destination_port;
     tcph->seq = htonl(3434);
     tcph->ack_seq = 0;
-    tcph->doff = sizeof(struct tcphdr) / 4;      //Size of tcp header
+    tcph->doff = sizeof(struct tcphdr) / 4;
     tcph->fin = TH_FIN & flags ? 1 : 0;
     tcph->syn = TH_SYN & flags ? 1 : 0;
     tcph->rst = TH_RST & flags ? 1 : 0;
     tcph->psh = TH_PUSH & flags ? 1 : 0; // Why are you like this!?
     tcph->ack = TH_ACK & flags ? 1 : 0;
     tcph->urg = TH_URG & flags ? 1 : 0;
-    tcph->window = htons ( 14600 );  // maximum allowed window size
+    tcph->window = htons ( 14600 );
     tcph->check = 0;
     tcph->urg_ptr = 0;
 
@@ -193,14 +193,13 @@ int main(int argc, char* argv[]) {
     tcph->check = csum( (unsigned short*) &psh , sizeof (struct pseudo_header));
 
     disable_os_header(s);
-    //Send the packet
-    printf("Sending the thing\n");
+
+    
     if ( sendto (s, datagram, sizeof(struct iphdr) + sizeof(struct tcphdr) , 0 , (struct sockaddr *) &destination_in, sizeof (destination_in)) < 0)
     {
         printf ("Error sending syn packet. Error number : %d . Error message : %s \n" , errno , strerror(errno));
         exit(0);
     }
-    printf("Sent it\n");
 
     return 0;
 }
