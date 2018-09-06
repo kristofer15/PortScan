@@ -9,6 +9,7 @@
 #include<arpa/inet.h>
 #include<netinet/tcp.h>   //Provides declarations for tcp header
 #include<netinet/ip.h>    //Provides declarations for ip header
+#include<unistd.h>
 
 struct pseudo_header    //needed for checksum calculation
 {
@@ -21,15 +22,58 @@ struct pseudo_header    //needed for checksum calculation
     struct tcphdr tcp;
 };
 
-
-unsigned short csum(unsigned short *buf,int nwords)
+unsigned short csum(unsigned short *ptr,int nbytes)
 {
-	//this function returns the checksum of a buffer
-	unsigned long sum;
-	for (sum = 0; nwords > 0; nwords--){sum += *buf++;}
-	sum = (sum >> 16) + (sum & 0xffff);
-	sum += (sum >> 16);
-	return (unsigned short) (~sum);
+    register long sum;
+    unsigned short oddbyte;
+    register short answer;
+ 
+    sum=0;
+    while(nbytes>1) {
+        sum+=*ptr++;
+        nbytes-=2;
+    }
+    if(nbytes==1) {
+        oddbyte=0;
+        *((u_char*)&oddbyte)=*(u_char*)ptr;
+        sum+=oddbyte;
+    }
+ 
+    sum = (sum>>16)+(sum & 0xffff);
+    sum = sum + (sum>>16);
+    answer=(short)~sum;
+     
+    return(answer);
+}
+
+uint32_t get_local_address()
+{
+
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+
+    int sock = socket ( AF_INET, SOCK_DGRAM, 0);
+ 
+    const char* kGoogleDnsIp = "8.8.8.8";
+    int dns_port = 53;
+ 
+    struct sockaddr_in serv;
+ 
+    memset( &serv, 0, sizeof(serv) );
+    serv.sin_family = AF_INET;
+    serv.sin_addr.s_addr = inet_addr(kGoogleDnsIp);
+    serv.sin_port = htons( dns_port );
+ 
+    int err = connect( sock , (const struct sockaddr*) &serv , sizeof(serv) );
+ 
+    struct sockaddr_in name;
+    socklen_t namelen = sizeof(name);
+    err = getsockname(sock, (struct sockaddr*) &name, &namelen);
+ 
+    // const char *p = inet_ntop(AF_INET, &name.sin_addr, buffer, 100);
+
+    close(sock);
+    return name.sin_addr.s_addr;
 }
 
 int main(int argc, char* argv[]) {
@@ -57,9 +101,19 @@ int main(int argc, char* argv[]) {
     struct hostent *source;
     struct hostent *destination;
 
-    // https://stackoverflow.com/questions/22149452/creating-ethernet-frame-in-sock-raw-communication
-    source = gethostbyname("192.168.1.77");
+    // Get source address
+    uint32_t source_address = get_local_address();
+
+    // https://stackoverflow.com/questions/7059299/how-to-properly-convert-an-unsigned-char-array-into-an-uint32-t
+    // uint32_t source_address = 0;
+    // memcpy(&source_address, source_buffer, 4);
+
+    // Get destination hostent
     destination = gethostbyname(argv[1]);
+    bcopy((char *)destination->h_addr,
+        (char *)&destination_in.sin_addr.s_addr,
+        destination->h_length);
+
 
     if (destination == NULL) {
         fprintf(stderr,"ERROR, no such host\n");
@@ -71,14 +125,6 @@ int main(int argc, char* argv[]) {
 
     // source_in.sin_port = htons(3123);
     destination_in.sin_port = htons(atoi(argv[2]));
-
-    // bcopy((char *)source->h_addr, 
-    //     (char *)&source_in.sin_addr.s_addr,
-    //     source->h_length);
-
-    bcopy((char *)destination->h_addr,
-        (char *)&destination_in.sin_addr.s_addr,
-        destination->h_length);
 
     // printf("Source address: %d\n", source->h_addr);
     printf("Destination address: %d\n", destination->h_addr);
@@ -97,10 +143,10 @@ int main(int argc, char* argv[]) {
     iph->ttl = 20;
     iph->protocol = IPPROTO_TCP;
     iph->check = 0;      //Set to 0 before calculating checksum
-    iph->saddr = inet_addr("192.168.1.77"); // source_in.sin_addr.s_addr;
+    iph->saddr = source_address; // source_in.sin_addr.s_addr;
     iph->daddr = destination_in.sin_addr.s_addr;
      
-    iph->check = 0;
+    iph->check = csum ((unsigned short *) datagram, iph->tot_len >> 1);
      
     //TCP Header
     tcph->source = htons(3123);
@@ -115,7 +161,7 @@ int main(int argc, char* argv[]) {
     tcph->ack=0;
     tcph->urg=0;
     tcph->window = htons ( 14600 );  // maximum allowed window size
-    tcph->check = 0; //if you set a checksum to zero, your kernel's IP stack should fill in the correct checksum during transmission
+    // tcph->check = 0; //if you set a checksum to zero, your kernel's IP stack should fill in the correct checksum during transmission
     tcph->urg_ptr = 0;
 
     int one = 1;
@@ -137,7 +183,7 @@ int main(int argc, char* argv[]) {
         
     memcpy(&psh.tcp , tcph , sizeof (struct tcphdr));
 
-    tcph->check = 0x5248; //csum( (unsigned short*) &psh , sizeof (struct pseudo_header));
+    tcph->check = csum( (unsigned short*) &psh , sizeof (struct pseudo_header));
         
     //Send the packet
     printf("Sending the thing\n");
