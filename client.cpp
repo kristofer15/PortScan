@@ -17,17 +17,6 @@
 
 #include "file_reader.h"
 
-// Blatantly copied from: https://stackoverflow.com/questions/1680365/integer-to-ip-address-c
-void print_ip(int ip)
-{
-    unsigned char bytes[4];
-    bytes[0] = ip & 0xFF;
-    bytes[1] = (ip >> 8) & 0xFF;
-    bytes[2] = (ip >> 16) & 0xFF;
-    bytes[3] = (ip >> 24) & 0xFF;   
-    printf("%d.%d.%d.%d\n", bytes[3], bytes[2], bytes[1], bytes[0]);        
-}
-
 // From: https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
 struct pseudo_header    //needed for checksum calculation
 {
@@ -162,12 +151,15 @@ void analyze_response(char *datagram, uint32_t server_address, uint8_t desired_f
     received_flags |= tcph->ack ? TH_ACK : 0;
     received_flags |= tcph->syn ? TH_SYN : 0;
     received_flags |= tcph->fin ? TH_FIN : 0;
-    received_flags |= tcph->psh ? TH_PUSH : 0;
     received_flags |= tcph->rst ? TH_RST : 0;
-    received_flags |= tcph->urg ? TH_URG : 0;
 
-    // desired_flags is a subset of received_flags and the address is correct
-    if(((desired_flags & received_flags) == desired_flags) && (server_address == received_address)) {
+    if(ntohs(tcph->source) == 631) {
+        std::cout << "Port 631 RST: " << std::endl;
+        std::cout << (received_flags & TH_RST) << std::endl;
+    }
+
+    // received_flags are desired_flags and the address is correct
+    if((received_flags == desired_flags) && (server_address == received_address)) {
         printf("%d is open\n", ntohs(tcph->source));
     }
     else if(server_address == received_address) {
@@ -208,7 +200,32 @@ void sniff(uint32_t server_address, uint8_t desired_flags) {
     }
 }
 
-void scan_host(const char *host_name, std::vector<int> &ports) {
+void create_flags(int option, uint8_t &out, uint8_t &in) {
+
+    
+    switch(option) {
+        case 's':   // SYN scan
+            out = TH_SYN;
+            in = TH_SYN | TH_ACK;
+            return;
+        case 'n':   // NULL scan
+            out = 0;
+            in = 0;
+            return;
+        case 'x':   // XMAS scan
+            out = 0b11111111;
+            in = 0;
+            return;
+        case 'f':
+            out = TH_FIN;
+            in = 0;
+            return;
+        default:
+            error("Scan option not recognized");
+    }
+}
+
+void scan_host(const char *host_name, std::vector<int> &ports, int option) {
     struct sockaddr_in source_in, destination_in;
     struct hostent *destination;
     struct pseudo_header psh;
@@ -228,6 +245,9 @@ void scan_host(const char *host_name, std::vector<int> &ports) {
     // Get source address
     uint32_t source_address = get_local_address();
     uint32_t destination_address = destination_in.sin_addr.s_addr;
+    
+    uint8_t out_flags, in_flags;
+    create_flags(option, out_flags, in_flags);
 
     if (destination == NULL) {
         fprintf(stderr,"ERROR, no such host\n");
@@ -240,11 +260,11 @@ void scan_host(const char *host_name, std::vector<int> &ports) {
     struct iphdr *iph = get_ip_header(datagram, source_address, destination_address);
     
     //TCP header
-    struct tcphdr *tcph = get_tcp_header(datagram, TH_SYN);
+    struct tcphdr *tcph = get_tcp_header(datagram, out_flags);
 
     disable_os_header(s);
 
-    std::thread sniffer_thread(sniff, destination_address, TH_SYN | TH_ACK);
+    std::thread sniffer_thread(sniff, destination_address, in_flags);
 
     srand(time(NULL));  // Seed random function
 
@@ -281,14 +301,20 @@ int main(int argc, char* argv[]) {
        exit(0);
     }
 
-    int c;
-    while((c = getopt(argc, argv, "ABC")) != -1) {
+    int c = -1;
+    int option = -1;
+    
+    while((c = getopt(argc, argv, "snxf")) != -1) {
 
-        switch(c) {
-            case 'A':
-                std::cout << "Received A!" << std::endl;
-                break;
+        if(option != -1) {
+            error("Too many scan options. Please specify one of [snxf]\n");
         }
+        
+        option = c;
+    }
+
+    if(option == -1) {
+        error("Scan option missing. Please specify one of [snxf]\n");
     }
 
     std::vector<int> ports = get_lines("ports.txt");
@@ -303,7 +329,7 @@ int main(int argc, char* argv[]) {
 
     // TODO: Multithread me
     for(const auto host : hosts) {
-        scan_host(host.c_str(), ports);
+        scan_host(host.c_str(), ports, option);
     }
 
     return 0;
