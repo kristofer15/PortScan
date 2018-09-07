@@ -13,6 +13,7 @@
 #include<thread>
 #include <vector>
 #include <algorithm>    // std::random_shuffle
+#include <iostream>
 
 #include "file_reader.h"
 
@@ -150,12 +151,23 @@ void disable_os_header(int s) {
     }
 }
 
-void analyze_response(char *datagram, uint32_t server_address) {
+void analyze_response(char *datagram, uint32_t server_address, uint8_t desired_flags) {
     struct iphdr *iph = (struct iphdr *) datagram;
     struct tcphdr *tcph = (struct tcphdr *) (datagram + sizeof(iphdr));
 
     uint32_t received_address = iph->saddr;
-    if((tcph->syn == 1) && (tcph->ack == 1) && (server_address == received_address)) {
+    uint8_t received_flags = 0;
+
+    // Collect received flags
+    received_flags |= tcph->ack ? TH_ACK : 0;
+    received_flags |= tcph->syn ? TH_SYN : 0;
+    received_flags |= tcph->fin ? TH_FIN : 0;
+    received_flags |= tcph->psh ? TH_PUSH : 0;
+    received_flags |= tcph->rst ? TH_RST : 0;
+    received_flags |= tcph->urg ? TH_URG : 0;
+
+    // desired_flags is a subset of received_flags and the address is correct
+    if(((desired_flags & received_flags) == desired_flags) && (server_address == received_address)) {
         printf("%d is open\n", ntohs(tcph->source));
     }
     else if(server_address == received_address) {
@@ -163,8 +175,7 @@ void analyze_response(char *datagram, uint32_t server_address) {
     }
 }
 
-#include <iostream>
-void sniff(uint32_t server_address) {
+void sniff(uint32_t server_address, uint8_t desired_flags) {
     int response_size;
 
     char datagram[4096];
@@ -188,7 +199,7 @@ void sniff(uint32_t server_address) {
             response_size = recvfrom(s, datagram, sizeof(datagram), 0, NULL, NULL);
 
             if(response_size > 0) {
-                analyze_response(datagram, server_address);
+                analyze_response(datagram, server_address, desired_flags);
             }
         }
         else {
@@ -233,7 +244,7 @@ void scan_host(const char *host_name, std::vector<int> &ports) {
 
     disable_os_header(s);
 
-    std::thread sniffer_thread(sniff, destination_address);
+    std::thread sniffer_thread(sniff, destination_address, TH_SYN | TH_ACK);
 
     srand(time(NULL));  // Seed random function
 
