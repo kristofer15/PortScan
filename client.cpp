@@ -270,6 +270,16 @@ int main(int argc, char* argv[]) {
        exit(0);
     }
 
+    int c;
+    while((c = getopt(argc, argv, "ABC")) != -1) {
+
+        switch(c) {
+            case 'A':
+                std::cout << "Received A!" << std::endl;
+                break;
+        }
+    }
+
     std::vector<int> ports = get_lines("ports.txt");
     std::vector<std::string> hosts = {"localhost"};
 
