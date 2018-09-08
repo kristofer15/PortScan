@@ -178,19 +178,18 @@ void analyze_response(char *datagram, uint32_t server_address, std::list<int> &h
     received_flags |= tcph->rst ? TH_RST : 0;
 
     if(server_address == received_address) {
-
-        if(ntohs(tcph->source == 631))  {
-            std::cout << "Received 631" << std::endl;
-        }
-
         exclusive_remove(hit_ports, ntohs(tcph->source));
 
-        // received_flags are desired_flags and the address is correct
-        if((received_flags == desired_flags) && (server_address == received_address)) {
-            printf("%d is open\n", ntohs(tcph->source));
-        }
-        else if(server_address == received_address) {
-            // printf("%d is closed\n", ntohs(tcph->dest));
+        // We indicate no response desired with no flags desired
+        if(desired_flags) {
+
+            // received_flags are desired_flags and the address is correct
+            if((received_flags == desired_flags) && (server_address == received_address)) {
+                printf("%d is open\n", ntohs(tcph->source));
+            }
+            else if(server_address == received_address) {
+                // printf("%d is closed\n", ntohs(tcph->dest));
+            }
         }
     }
 }
@@ -223,8 +222,12 @@ void sniff(uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_f
             }
         }
         else {
-            std::cout << "No response received from:" << std::endl;
-            exclusive_print(hit_ports);
+
+            // Desiring non-responses is indicated by desiring no flags
+            if(!desired_flags) {
+                std::cout << "No response received from:" << std::endl;
+                exclusive_print(hit_ports);
+            }
             return;
         }
     }
@@ -294,11 +297,10 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
             exit(0);
         }
 
-        if(destination_port == 631) {
-            std::cout << "Added 631" << std::endl;
-        }
-
         exclusive_push(hit_ports, destination_port);
+
+        // Sleep for a random time interval between 0.5 and 0.8s
+        usleep((rand() % 300000) + 500000);
     }
 
     sniffer_thread.join();
@@ -312,16 +314,12 @@ void scan_host(int option, const char *host_name, std::vector<int> &ports) {
             return;
         case 'n':   // NULL scan
             hit_tcp(host_name, ports, 0, 0);
-            // out = 0;
-            // in = 0;
             return;
         case 'x':   // XMAS scan
-            // out = 0b11111111;
-            // in = 0;
+            hit_tcp(host_name, ports, 0b11111111, 0);
             return;
         case 'f':   // FIN scan
-            // out = TH_FIN;
-            // in = 0;
+            hit_tcp(host_name, ports, TH_FIN, 0);
             return;
         default:
             error("Scan option not recognized");
