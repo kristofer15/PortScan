@@ -34,6 +34,12 @@ struct pseudo_header    //needed for checksum calculation
     struct tcphdr tcp;
 };
 
+char *int_to_ip(uint32_t address) {
+    struct in_addr ip_addr;
+    ip_addr.s_addr = address;
+    return inet_ntoa(ip_addr);
+} 
+
 // From: https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
 unsigned short csum(unsigned short *ptr,int nbytes)
 {
@@ -71,6 +77,7 @@ void exclusive_remove(std::list<int> &l, int value) {
 }
 
 void exclusive_print(std::list<int> l) {
+    std::lock_guard<std::mutex> guard(PORT_MUTEX);
     std::list<int>::iterator it;
     
     for(it = l.begin(); it != l.end(); ++it) {
@@ -185,7 +192,7 @@ void analyze_response(char *datagram, uint32_t server_address, std::list<int> &h
 
             // received_flags are desired_flags and the address is correct
             if((received_flags == desired_flags) && (server_address == received_address)) {
-                printf("%d is open\n", ntohs(tcph->source));
+                std::cout << int_to_ip(server_address) << ": " <<  ntohs(tcph->source) << " is open" << std::endl;
             }
             else if(server_address == received_address) {
                 // printf("%d is closed\n", ntohs(tcph->dest));
@@ -225,16 +232,24 @@ void sniff(uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_f
 
             // Desiring non-responses is indicated by desiring no flags
             if(!desired_flags) {
-                std::cout << "No response received from:" << std::endl;
-                exclusive_print(hit_ports);
+
+                std::lock_guard<std::mutex> guard(PORT_MUTEX);
+                std::list<int>::iterator it;
+
+                std::cout << int_to_ip(server_address) << ": " << "No response received from:" << std::endl;
+                for(it = hit_ports.begin(); it != hit_ports.end(); ++it) {
+                    std::cout << *it << std::endl;
+                }
+                
             }
+
             return;
         }
     }
 }
 
 void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, uint8_t in_flags) {
-    struct sockaddr_in source_in, destination_in;
+    struct sockaddr_in destination_in;
     struct hostent *destination;
     struct pseudo_header psh;
     std::mutex hit_port_mutex;
@@ -329,10 +344,10 @@ void scan_host(int option, std::string host_name, std::vector<int> &ports) {
 
 int main(int argc, char* argv[]) {
     
-    if (argc < 2) {
-       fprintf(stderr,"usage %s hostname\n", argv[0]);
-       exit(0);
-    }
+    // if (argc < 2) {
+    //    fprintf(stderr,"usage %s hostname\n", argv[0]);
+    //    exit(0);
+    // }
 
     int c = -1;
     int option = -1;
