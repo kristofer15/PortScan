@@ -227,12 +227,16 @@ void sniff(uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_f
             if(response_size > 0) {
                 analyze_response(datagram, server_address, hit_ports, desired_flags);
             }
+
+            // Reset timer
+            t.tv_sec = 3;
         }
         else {
 
             // Desiring non-responses is indicated by desiring no flags
             if(!desired_flags) {
 
+                // FIXME
                 std::lock_guard<std::mutex> guard(PORT_MUTEX);
                 std::list<int>::iterator it;
 
@@ -243,6 +247,7 @@ void sniff(uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_f
                 
             }
 
+            std::cout << "Quitting sniffer" << std::endl;
             return;
         }
     }
