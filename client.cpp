@@ -306,20 +306,21 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
     sniffer_thread.join();
 }
 
-void scan_host(int option, const char *host_name, std::vector<int> &ports) {
+void scan_host(int option, std::string host_name, std::vector<int> &ports) {
 
+    // Don't pass c strings to this function. Not thread safe for some reason.
     switch(option) {
         case 's':   // SYN scan
-            hit_tcp(host_name, ports, TH_SYN, TH_SYN|TH_ACK);
+            hit_tcp(host_name.c_str(), ports, TH_SYN, TH_SYN|TH_ACK);
             return;
         case 'n':   // NULL scan
-            hit_tcp(host_name, ports, 0, 0);
+            hit_tcp(host_name.c_str(), ports, 0, 0);
             return;
         case 'x':   // XMAS scan
-            hit_tcp(host_name, ports, 0b11111111, 0);
+            hit_tcp(host_name.c_str(), ports, 0b11111111, 0);
             return;
         case 'f':   // FIN scan
-            hit_tcp(host_name, ports, TH_FIN, 0);
+            hit_tcp(host_name.c_str(), ports, TH_FIN, 0);
             return;
         default:
             error("Scan option not recognized");
@@ -350,7 +351,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::vector<int> ports = get_lines("ports.txt");
-    std::vector<std::string> hosts = {"localhost"};
+    std::vector<std::string> hosts = {"localhost", "skel.ru.is", "scanme.nmap.org"};
 
     // set seed for random_shuffle()
     std::srand(unsigned(std::time(0)));
@@ -359,9 +360,16 @@ int main(int argc, char* argv[]) {
     std::random_shuffle(ports.begin(), ports.end());
     std::random_shuffle(hosts.begin(), hosts.end());
 
-    // TODO: Multithread me
-    for(const std::string host : hosts) {
-        scan_host(option, host.c_str(), ports);
+    std::vector<std::thread> threads;
+    for(std::string host : hosts) {
+        // Ports are in STL and should be read safe
+        std::thread target_thread(scan_host, option, host, std::ref(ports));
+        threads.push_back(std::move(target_thread));
+    }
+
+    // Join threads
+    for(auto& thread : threads) {
+        thread.join();
     }
 
     return 0;
