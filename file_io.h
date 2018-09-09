@@ -1,5 +1,6 @@
 #include <fstream>
 #include <vector>
+#include <iostream>
 
 struct result {
     std::string ip;
@@ -7,24 +8,23 @@ struct result {
     std::string comment;
 };
 
-// read ports from file
-// Assuming format = one port number per line
-std::vector<int> get_lines(std::string file_path) {
-    std::vector<int> ports;
+template <class T>
+std::vector<T> get_lines(std::string file_path) {
+    std::vector<T> lines;
 
     std::ifstream file (file_path);
     if (file.is_open())
     {
-        int port;
-        while (file >> port)
+        T line;
+        while (file >> line)
         {
-            ports.push_back(port);
+            lines.push_back(line);
         }
         file.close();
     }
 
     // Return empty vector if file could not be read
-    return ports;
+    return lines;
 }
 
 void csv_append_results(struct result line, std::string fileName="results.csv") {

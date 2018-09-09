@@ -224,8 +224,8 @@ void connect_tcp(const char *host_name, std::vector<int> &ports) {
 
     char buffer[256];
 
-    int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    
+    int s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+
     destination = gethostbyname(host_name);
 
     bzero((char *) &destination_in, sizeof(destination_in));
@@ -236,23 +236,48 @@ void connect_tcp(const char *host_name, std::vector<int> &ports) {
     (char *)&destination_in.sin_addr.s_addr,
     destination->h_length);
 
+    fd_set socks;
+    FD_ZERO(&socks);
+    FD_SET(s, &socks);
+    struct timeval t;
+
     for(int port : ports) {
         destination_in.sin_port = htons(port);
         struct result line;
         line.ip = int_to_ip(destination_in.sin_addr.s_addr);
         line.port = std::to_string(port);
 
-        if(connect(s, (struct sockaddr *) &destination_in, sizeof(destination_in)) < 0) {
+        // Reset select timeout on new connections
+        t.tv_sec = 1;
+        int status = connect(s, (struct sockaddr *) &destination_in, sizeof(destination_in));
+
+        // Already connected
+        if(status = 0) {
+            line.comment = "open";
+        }
+        // Connection already failed
+        else if(status != EINPROGRESS) {
             line.comment = "closed";
         }
         else {
-            line.comment = "open";
+            // Wait for a signal
+            int state = select(s+1, &socks, NULL, NULL, &t);
+
+            // Did a connection just finish?
+            if(state && FD_ISSET(s, &socks)) {
+                line.comment = "open";
+            }
+            else {
+                line.comment = "closed";
+            }
         }
 
-        // Stack overflow tells me that this works in loops
-        // The internet doesn't lie
-        std::lock_guard<std::mutex> guard(IO_MUTEX);
+        IO_MUTEX.lock();
         csv_append_results(line);
+        IO_MUTEX.unlock();
+
+        // Sleep for a random time interval between 0.5 and 0.8s
+        usleep((rand() % 300000) + 500000);
     }
 }
 
@@ -310,7 +335,7 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
             
         memcpy(&psh.tcp, tcph, sizeof(struct tcphdr));
 
-        tcph->check = csum( (unsigned short*) &psh , sizeof (struct pseudo_header));
+        tcph->check = csum( (unsigned short*) &psh, sizeof (struct pseudo_header));
 
         if ( sendto (s, datagram, sizeof(struct iphdr) + sizeof(struct tcphdr) , 0 , (struct sockaddr *) &destination_in, sizeof (destination_in)) < 0)
         {
@@ -372,28 +397,31 @@ void scan_host(int option, std::string host_name, std::vector<int> &ports) {
     switch(option) {
         case 's':   // SYN scan
             hit_tcp(host_name.c_str(), ports, TH_SYN, TH_SYN|TH_ACK);
-            return;
+            break;
         case 'n':   // NULL scan
             hit_tcp(host_name.c_str(), ports, 0, 0);
-            return;
+            break;
         case 'x':   // XMAS scan
             hit_tcp(host_name.c_str(), ports, 0b11111111, 0);
-            return;
+            break;
         case 'f':   // FIN scan
             hit_tcp(host_name.c_str(), ports, TH_FIN, 0);
-            return;
+            break;
         case 'a':   // SYN|ACK - TODO: Rename because of ambiguitiy with ACK scans
             hit_tcp(host_name.c_str(), ports, TH_SYN|TH_ACK, 0);
-            return;
+            break;
         case 'c':   // TCP Connect (Full handshake)
             connect_tcp(host_name.c_str(), ports);
-            return;
+            break;
         default:
             // Don't go here
             std::cout << "Scan option not recognized" << std::endl;
             exit(0);
             help();
     }
+
+    std::lock_guard<std::mutex> guard(IO_MUTEX);
+    std::cout << "Done scanning " << host_name << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -419,8 +447,8 @@ int main(int argc, char* argv[]) {
         exit(0);
     }
 
-    std::vector<int> ports = get_lines("ports.txt");
-    std::vector<std::string> hosts = {"localhost", "skel.ru.is", "scanme.nmap.org"};
+    std::vector<int> ports = get_lines<int>("ports.txt");
+    std::vector<std::string> hosts = get_lines<std::string>("test_hosts.txt");
 
     // set seed for random_shuffle()
     std::srand(unsigned(std::time(0)));
@@ -431,6 +459,8 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::thread> threads;
     for(std::string host : hosts) {
+        std::cout << "Scanning " << host << std::endl;
+
         // Ports are in STL and should be read safe
         std::thread target_thread(scan_host, option, host, std::ref(ports));
         threads.push_back(std::move(target_thread));
