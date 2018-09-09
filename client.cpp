@@ -213,18 +213,46 @@ void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desir
             t.tv_sec = 3;
         }
         else {
-
-            // Desiring non-responses is indicated by desiring no flags
-            if(!desired_flags) {
-
-                // IO_MUTEX stops multiple scans from printing at once.
-                // hit_ports has a different mutex that ensures thread safety in a particular scan
-                std::lock_guard<std::mutex> guard(IO_MUTEX);
-                hit_ports.print_all(std::string(int_to_ip(server_address)) + " did not respond on:");
-            }
-
             return;
         }
+    }
+}
+
+void connect_tcp(const char *host_name, std::vector<int> &ports) {
+    struct sockaddr_in destination_in;
+    struct hostent *destination;
+
+    char buffer[256];
+
+    int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    
+    destination = gethostbyname(host_name);
+
+    bzero((char *) &destination_in, sizeof(destination_in));
+
+    destination_in.sin_family = AF_INET;
+
+    bcopy((char *)destination->h_addr,
+    (char *)&destination_in.sin_addr.s_addr,
+    destination->h_length);
+
+    for(int port : ports) {
+        destination_in.sin_port = htons(port);
+        struct result line;
+        line.ip = int_to_ip(destination_in.sin_addr.s_addr);
+        line.port = std::to_string(port);
+
+        if(connect(s, (struct sockaddr *) &destination_in, sizeof(destination_in)) < 0) {
+            line.comment = "closed";
+        }
+        else {
+            line.comment = "open";
+        }
+
+        // Stack overflow tells me that this works in loops
+        // The internet doesn't lie
+        std::lock_guard<std::mutex> guard(IO_MUTEX);
+        csv_append_results(line);
     }
 }
 
@@ -232,7 +260,6 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
     struct sockaddr_in destination_in;
     struct hostent *destination;
     struct pseudo_header psh;
-    std::mutex hit_port_mutex;
     ExclusiveList<int> hit_ports;
 
 	int s = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
@@ -285,9 +312,9 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
 
         tcph->check = csum( (unsigned short*) &psh , sizeof (struct pseudo_header));
 
-
         if ( sendto (s, datagram, sizeof(struct iphdr) + sizeof(struct tcphdr) , 0 , (struct sockaddr *) &destination_in, sizeof (destination_in)) < 0)
         {
+            // TODO: cout
             printf ("Error sending packet. Error number: %d . Error message: %s \n" , errno , strerror(errno));
             exit(0);
         }
@@ -299,17 +326,44 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
     }
 
     sniffer_thread.join();
+
+    if(!in_flags) {
+        std::list<int> hit_ports_final = hit_ports.get_list_copy();
+
+        // Just lock for the entire duration of this threads write.
+        // It's roughly as fast but should output grouped hosts.
+        std::lock_guard<std::mutex> guard(IO_MUTEX);
+
+        for(int port : ports) {
+            struct result line;
+            line.ip = int_to_ip(destination_address);
+            line.port = std::to_string(port);
+            
+            std::list<int>::iterator it;
+            it = std::find(hit_ports_final.begin(), hit_ports_final.end(), port);
+
+            if(it != hit_ports_final.end()) {
+                line.comment = "open";
+            }
+            else {
+                line.comment = "closed";
+            }
+
+            csv_append_results(line);
+        }
+    }
 }
 
 void help(std::string programName="scanner") {
     std::cout << "Usage:" << std::endl;
-    std::cout << programName << " -[snxfa] (Specify one)" << std::endl;
+    std::cout << programName << " -[snxfac] (Specify one)" << std::endl;
     std::cout << "SCAN TYPES: " << std::endl;
     std::cout << "-s: SYN scan" << std::endl;
     std::cout << "-n: NULL scan" << std::endl;
     std::cout << "-x: XMAS scan" << std::endl;
     std::cout << "-f: FIN scan" << std::endl;
     std::cout << "-a: SYN|ACK scan (not to be confused with ACK scan)" << std::endl;
+    std::cout << "-c: TCP connect (Full handshake)" << std::endl;
 }
 
 void scan_host(int option, std::string host_name, std::vector<int> &ports) {
@@ -331,9 +385,12 @@ void scan_host(int option, std::string host_name, std::vector<int> &ports) {
         case 'a':   // SYN|ACK - TODO: Rename because of ambiguitiy with ACK scans
             hit_tcp(host_name.c_str(), ports, TH_SYN|TH_ACK, 0);
             return;
+        case 'c':   // TCP Connect (Full handshake)
+            connect_tcp(host_name.c_str(), ports);
+            return;
         default:
             // Don't go here
-            std::cout << "Scan option recognized" << std::endl;
+            std::cout << "Scan option not recognized" << std::endl;
             exit(0);
             help();
     }
@@ -345,7 +402,7 @@ int main(int argc, char* argv[]) {
     int c = -1;
     int option = -1;
     
-    while((c = getopt(argc, argv, "snxfa")) != -1) {
+    while((c = getopt(argc, argv, "snxfac")) != -1) {
 
         if(option != -1) {
             std::cout << "Too many scan options" << std::endl;
