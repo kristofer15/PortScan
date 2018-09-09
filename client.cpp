@@ -150,7 +150,7 @@ void disable_os_header(int s) {
     }
 }
 
-void analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
+bool analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
     struct iphdr *iph = (struct iphdr *) datagram;
     struct tcphdr *tcph = (struct tcphdr *) (datagram + sizeof(iphdr));
 
@@ -183,11 +183,18 @@ void analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int
             std::lock_guard<std::mutex> guard(IO_MUTEX);
             csv_append_results(line);
         }
+
+        // Our host answered
+        return true;
     }
+
+    // This was not our host
+    return false;
 }
 
 void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
     int response_size;
+    bool server_responded = false;
 
     char datagram[4096];
     memset(&datagram, 0, 4096);
@@ -199,18 +206,19 @@ void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desir
     FD_ZERO(&socks);
     FD_SET(s, &socks);
     struct timeval t;
-    t.tv_sec = 3;
+    t.tv_sec = 60;  // Set a long initial timer for slow responses
 
     while(true) {
         if(select(s+1, &socks, NULL, NULL, &t)) {
             response_size = recvfrom(s, datagram, sizeof(datagram), 0, NULL, NULL);
-
             if(response_size > 0) {
-                analyze_response(datagram, server_address, hit_ports, desired_flags);
+                server_responded = analyze_response(datagram, server_address, hit_ports, desired_flags);
             }
 
-            // Reset timer
-            t.tv_sec = 3;
+            // Now that the server is responding, it tends to respond more rapidly
+            if(server_responded) {
+                t.tv_sec = 10;
+            }
         }
         else {
             return;
@@ -276,8 +284,8 @@ void connect_tcp(const char *host_name, std::vector<int> &ports) {
         csv_append_results(line);
         IO_MUTEX.unlock();
 
-        // Sleep for a random time interval between 0.5 and 0.8s
-        usleep((rand() % 300000) + 500000);
+        // Sleep for a random time interval between 0.5 and 1.0s
+        usleep((rand() % 500000) + 500000);
     }
 }
 
@@ -346,8 +354,8 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
 
         hit_ports.add(destination_port);
 
-        // Sleep for a random time interval between 0.5 and 0.8s
-        usleep((rand() % 300000) + 500000);
+        // Sleep for a random time interval between 0.5 and 1.0s
+        usleep((rand() % 500000) + 500000);
     }
 
     sniffer_thread.join();
@@ -447,8 +455,8 @@ int main(int argc, char* argv[]) {
         exit(0);
     }
 
-    std::vector<int> ports = get_lines<int>("ports.txt");
-    std::vector<std::string> hosts = get_lines<std::string>("test_hosts.txt");
+    std::vector<int> ports = get_lines<int>("test_ports.txt");
+    std::vector<std::string> hosts = get_lines<std::string>("REAL_hosts.txt");
 
     // set seed for random_shuffle()
     std::srand(unsigned(std::time(0)));
