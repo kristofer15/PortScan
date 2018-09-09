@@ -17,14 +17,14 @@
 #include <algorithm>    // std::random_shuffle
 #include <iostream>
 
-#include "file_reader.h"
+#include "file_io.h"
+#include "exclusive_list.h"
 
 // TODO: CHANGE ME PROBABLY
-std::mutex PORT_MUTEX;
+std::mutex IO_MUTEX;
 
 // From: https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
-struct pseudo_header    //needed for checksum calculation
-{
+struct pseudo_header {
     unsigned int source_address;
     unsigned int dest_address;
     unsigned char placeholder;
@@ -41,8 +41,7 @@ char *int_to_ip(uint32_t address) {
 } 
 
 // From: https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
-unsigned short csum(unsigned short *ptr,int nbytes)
-{
+unsigned short csum(unsigned short *ptr,int nbytes) {
     register long sum;
     unsigned short oddbyte;
     register short answer;
@@ -60,35 +59,14 @@ unsigned short csum(unsigned short *ptr,int nbytes)
  
     sum = (sum>>16)+(sum & 0xffff);
     sum = sum + (sum>>16);
-    answer=(short)~sum;
+    answer = (short)~sum;
      
     return(answer);
-}
-
-// TODO: templates
-void exclusive_push(std::list<int> &l, int value) {
-    std::lock_guard<std::mutex> guard(PORT_MUTEX);
-    l.push_back(value);
-}
-
-void exclusive_remove(std::list<int> &l, int value) {
-    std::lock_guard<std::mutex> guard(PORT_MUTEX);
-    l.remove(value);
-}
-
-void exclusive_print(std::list<int> l) {
-    std::lock_guard<std::mutex> guard(PORT_MUTEX);
-    std::list<int>::iterator it;
-    
-    for(it = l.begin(); it != l.end(); ++it) {
-        std::cout << *it << std::endl;
-    }
 }
 
 // Modified from: https://www.binarytides.com/tcp-syn-portscan-in-c-with-linux-sockets/
 uint32_t get_local_address()
 {
-
     char buffer[1024];
     memset(buffer, 0, sizeof(buffer));
 
@@ -166,12 +144,13 @@ void disable_os_header(int s) {
      
     if (setsockopt (s, IPPROTO_IP, IP_HDRINCL, val, sizeof (one)) < 0)
     {
-        printf ("Error setting IP_HDRINCL. Error number : %d . Error message : %s \n" , errno , strerror(errno));
+        std::cout << "Could not set IP_HDRINCL. Error number: " << errno << std::endl;
+        std::cout << "Error message: " << strerror(errno) << std::endl;
         exit(0);
     }
 }
 
-void analyze_response(char *datagram, uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_flags) {
+void analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
     struct iphdr *iph = (struct iphdr *) datagram;
     struct tcphdr *tcph = (struct tcphdr *) (datagram + sizeof(iphdr));
 
@@ -185,31 +164,33 @@ void analyze_response(char *datagram, uint32_t server_address, std::list<int> &h
     received_flags |= tcph->rst ? TH_RST : 0;
 
     if(server_address == received_address) {
-        exclusive_remove(hit_ports, ntohs(tcph->source));
+        hit_ports.remove(ntohs(tcph->source));
 
         // We indicate no response desired with no flags desired
         if(desired_flags) {
+            struct result line;
+            line.ip = int_to_ip(server_address);
+            line.port = std::to_string(ntohs(tcph->source));
 
             // received_flags are desired_flags and the address is correct
             if((received_flags == desired_flags) && (server_address == received_address)) {
-                std::cout << int_to_ip(server_address) << ": " <<  ntohs(tcph->source) << " is open" << std::endl;
+                line.comment = "open";
             }
             else if(server_address == received_address) {
-                // printf("%d is closed\n", ntohs(tcph->dest));
+                line.comment = "closed";
             }
+
+            std::lock_guard<std::mutex> guard(IO_MUTEX);
+            csv_append_results(line);
         }
     }
 }
 
-void sniff(uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_flags) {
+void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
     int response_size;
 
     char datagram[4096];
     memset(&datagram, 0, 4096);
-
-    // struct sockaddr server;
-    // socklen_t server_size = sizeof(server);
-    // memset(&server, 0, server_size);
 
     int s = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
 
@@ -236,18 +217,12 @@ void sniff(uint32_t server_address, std::list<int> &hit_ports, uint8_t desired_f
             // Desiring non-responses is indicated by desiring no flags
             if(!desired_flags) {
 
-                // FIXME
-                std::lock_guard<std::mutex> guard(PORT_MUTEX);
-                std::list<int>::iterator it;
-
-                std::cout << int_to_ip(server_address) << ": " << "No response received from:" << std::endl;
-                for(it = hit_ports.begin(); it != hit_ports.end(); ++it) {
-                    std::cout << *it << std::endl;
-                }
-                
+                // IO_MUTEX stops multiple scans from printing at once.
+                // hit_ports has a different mutex that ensures thread safety in a particular scan
+                std::lock_guard<std::mutex> guard(IO_MUTEX);
+                hit_ports.print_all(std::string(int_to_ip(server_address)) + " did not respond on:");
             }
 
-            std::cout << "Quitting sniffer" << std::endl;
             return;
         }
     }
@@ -258,7 +233,7 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
     struct hostent *destination;
     struct pseudo_header psh;
     std::mutex hit_port_mutex;
-    std::list<int> hit_ports;
+    ExclusiveList<int> hit_ports;
 
 	int s = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
 
@@ -317,13 +292,24 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
             exit(0);
         }
 
-        exclusive_push(hit_ports, destination_port);
+        hit_ports.add(destination_port);
 
         // Sleep for a random time interval between 0.5 and 0.8s
         usleep((rand() % 300000) + 500000);
     }
 
     sniffer_thread.join();
+}
+
+void help(std::string programName="scanner") {
+    std::cout << "Usage:" << std::endl;
+    std::cout << programName << " -[snxfa] (Specify one)" << std::endl;
+    std::cout << "SCAN TYPES: " << std::endl;
+    std::cout << "-s: SYN scan" << std::endl;
+    std::cout << "-n: NULL scan" << std::endl;
+    std::cout << "-x: XMAS scan" << std::endl;
+    std::cout << "-f: FIN scan" << std::endl;
+    std::cout << "-a: SYN|ACK scan (not to be confused with ACK scan)" << std::endl;
 }
 
 void scan_host(int option, std::string host_name, std::vector<int> &ports) {
@@ -342,32 +328,38 @@ void scan_host(int option, std::string host_name, std::vector<int> &ports) {
         case 'f':   // FIN scan
             hit_tcp(host_name.c_str(), ports, TH_FIN, 0);
             return;
+        case 'a':   // SYN|ACK - TODO: Rename because of ambiguitiy with ACK scans
+            hit_tcp(host_name.c_str(), ports, TH_SYN|TH_ACK, 0);
+            return;
         default:
-            error("Scan option not recognized");
+            // Don't go here
+            std::cout << "Scan option recognized" << std::endl;
+            exit(0);
+            help();
     }
 }
 
 int main(int argc, char* argv[]) {
-    
-    // if (argc < 2) {
-    //    fprintf(stderr,"usage %s hostname\n", argv[0]);
-    //    exit(0);
-    // }
+    remove_results_file();
 
     int c = -1;
     int option = -1;
     
-    while((c = getopt(argc, argv, "snxf")) != -1) {
+    while((c = getopt(argc, argv, "snxfa")) != -1) {
 
         if(option != -1) {
-            error("Too many scan options. Please specify one of [snxf]\n");
+            std::cout << "Too many scan options" << std::endl;
+            help(argv[0]);
+            exit(0);
         }
         
         option = c;
     }
 
     if(option == -1) {
-        error("Scan option missing. Please specify one of [snxf]\n");
+        std::cout << "Scan option missing" << std::endl;
+        help(argv[0]);
+        exit(0);
     }
 
     std::vector<int> ports = get_lines("ports.txt");
