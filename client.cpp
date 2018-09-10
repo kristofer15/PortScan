@@ -235,6 +235,10 @@ void connect_tcp(const char *host_name, std::vector<int> &ports) {
     int s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
 
     destination = gethostbyname(host_name);
+    if(destination == NULL) {
+        std::cout << "Could not find " << host_name << std::endl;
+        return;
+    }
 
     bzero((char *) &destination_in, sizeof(destination_in));
 
@@ -303,6 +307,13 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
 
     // Get destination hostent
     destination = gethostbyname(host_name);
+    if(destination == NULL) {
+        std::cout << "Could not find " << host_name << std::endl;
+        return;
+    }
+
+    bzero((char *) &destination_in, sizeof(destination_in));
+
     bcopy((char *)destination->h_addr,
         (char *)&destination_in.sin_addr.s_addr,
         destination->h_length);
@@ -310,11 +321,6 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
     // Get source address
     uint32_t source_address = get_local_address();
     uint32_t destination_address = destination_in.sin_addr.s_addr;
-
-    if (destination == NULL) {
-        fprintf(stderr,"ERROR, no such host\n");
-        exit(0);
-    }
 
     destination_in.sin_family = AF_INET;
 
@@ -360,6 +366,7 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
 
     sniffer_thread.join();
 
+    // Log responders and non-responders
     if(!in_flags) {
         std::list<int> hit_ports_final = hit_ports.get_list_copy();
 
@@ -455,7 +462,7 @@ int main(int argc, char* argv[]) {
         exit(0);
     }
 
-    std::vector<int> ports = get_lines<int>("test_ports.txt");
+    std::vector<int> ports = get_lines<int>("ports.txt");
     std::vector<std::string> hosts = get_lines<std::string>("REAL_hosts.txt");
 
     // set seed for random_shuffle()
