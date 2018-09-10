@@ -195,6 +195,7 @@ bool analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int
 void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
     int response_size;
     bool server_responded = false;
+    struct timeval t;
 
     char datagram[4096];
     memset(&datagram, 0, 4096);
@@ -205,7 +206,6 @@ void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desir
     fd_set socks;
     FD_ZERO(&socks);
     FD_SET(s, &socks);
-    struct timeval t;
     t.tv_sec = 60;  // Set a long initial timer for slow responses
 
     while(true) {
@@ -435,6 +435,7 @@ void scan_host(int option, std::string host_name, std::vector<int> &ports) {
             help();
     }
 
+    // Lock IO to prevent unwanted output splicing
     std::lock_guard<std::mutex> guard(IO_MUTEX);
     std::cout << "Done scanning " << host_name << std::endl;
 }
@@ -447,6 +448,7 @@ int main(int argc, char* argv[]) {
     
     while((c = getopt(argc, argv, "snxfac")) != -1) {
 
+        // Set the option once
         if(option != -1) {
             std::cout << "Too many scan options" << std::endl;
             help(argv[0]);
@@ -462,6 +464,7 @@ int main(int argc, char* argv[]) {
         exit(0);
     }
 
+    // TODO: Allow input and output files to be selected from CLI
     std::vector<int> ports = get_lines<int>("ports.txt");
     std::vector<std::string> hosts = get_lines<std::string>("REAL_hosts.txt");
 
