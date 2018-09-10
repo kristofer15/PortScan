@@ -29,11 +29,6 @@ public:
         }
     };
 
-    void write_to_file(void (*write_function)(std::list<T>), std::string) {
-        std::lock_guard<std::mutex> guard(m);
-        (*write_function)(l);
-    }
-
     std::list<T> get_list_copy() {
         std::lock_guard<std::mutex> guard(m);
         return l;
