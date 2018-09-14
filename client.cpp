@@ -146,7 +146,6 @@ void disable_os_header(int s) {
     {
         std::cout << "Could not set IP_HDRINCL. Error number: " << errno << std::endl;
         std::cout << "Error message: " << strerror(errno) << std::endl;
-        exit(0);
     }
 }
 
@@ -192,7 +191,7 @@ bool analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int
     return false;
 }
 
-void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
+void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags, bool &sniffing) {
     int response_size;
     bool server_responded = false;
     struct timeval t;
@@ -221,6 +220,7 @@ void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desir
             }
         }
         else {
+            sniffing = false;
             return;
         }
     }
@@ -332,11 +332,18 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
 
     disable_os_header(s);
 
-    std::thread sniffer_thread(sniff, destination_address, std::ref(hit_ports), in_flags);
+    bool sniffing = true;
+    std::thread sniffer_thread(sniff, destination_address, std::ref(hit_ports), in_flags, std::ref(sniffing));
 
     srand(time(NULL));  // Seed random function
 
-    for(int destination_port : ports) {        
+    for(int destination_port : ports) {
+
+        // Return with the sniffer
+        if(!sniffing) {
+            return;
+        }
+
         tcph->source = htons((rand() % 2000) + 2000); // Get a random port in range 2000 - 3999
         tcph->dest = htons(destination_port);
         tcph->check = 0;
@@ -355,7 +362,6 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
         {
             // TODO: cout
             printf ("Error sending packet. Error number: %d . Error message: %s \n" , errno , strerror(errno));
-            exit(0);
         }
 
         hit_ports.add(destination_port);
@@ -477,11 +483,15 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::thread> threads;
     for(std::string host : hosts) {
+        if(host == "") { continue; }
         std::cout << "Scanning " << host << std::endl;
 
         // Ports are in STL and should be read safe
+        // scan_host(option, host, std::ref(ports));
         std::thread target_thread(scan_host, option, host, std::ref(ports));
         threads.push_back(std::move(target_thread));
+
+        usleep((rand() % 500000) + 500000);
     }
 
     // Join threads

@@ -2,4 +2,3 @@ bin/
 .vscode/
 *.pdf
 *hosts.txt
-*ports.txt
