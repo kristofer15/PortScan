@@ -191,7 +191,7 @@ bool analyze_response(char *datagram, uint32_t server_address, ExclusiveList<int
     return false;
 }
 
-void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags, bool &sniffing) {
+void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desired_flags) {
     int response_size;
     bool server_responded = false;
     struct timeval t;
@@ -220,7 +220,6 @@ void sniff(uint32_t server_address, ExclusiveList<int> &hit_ports, uint8_t desir
             }
         }
         else {
-            sniffing = false;
             return;
         }
     }
@@ -332,17 +331,11 @@ void hit_tcp(const char *host_name, std::vector<int> &ports, uint8_t out_flags, 
 
     disable_os_header(s);
 
-    bool sniffing = true;
-    std::thread sniffer_thread(sniff, destination_address, std::ref(hit_ports), in_flags, std::ref(sniffing));
+    std::thread sniffer_thread(sniff, destination_address, std::ref(hit_ports), in_flags);
 
     srand(time(NULL));  // Seed random function
 
     for(int destination_port : ports) {
-
-        // Return with the sniffer
-        if(!sniffing) {
-            return;
-        }
 
         tcph->source = htons((rand() % 2000) + 2000); // Get a random port in range 2000 - 3999
         tcph->dest = htons(destination_port);
